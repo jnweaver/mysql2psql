@@ -5,26 +5,26 @@ class Mysql2psql
   class MysqlReader
     class Field
     end
-  
+
     class Table
       attr_reader :name
-    
+
       def initialize(reader, name)
         @reader = reader
         @name = name
       end
-    
+
       @@types = %w(tiny enum decimal short long float double null timestamp longlong int24 date time datetime year set blob string var_string char).inject({}) do |list, type|
         list[eval("::Mysql::Field::TYPE_#{type.upcase}")] = type
         list
       end
-    
+
       @@types[246] = "decimal"
-    
+
       def columns
         @columns ||= load_columns
       end
-    
+
       def convert_type(type)
         case type
         when /int.* unsigned/
@@ -43,15 +43,17 @@ class Mysql2psql
           "varchar"
         when /char/
           "char"
-        when /(float|decimal)/
+        when /float/
+          "float"
+        when /decimal/
           "decimal"
         when /double/
            "double precision"
         else
           type
-        end 
+        end
       end
-    
+
       def load_columns
         @reader.reconnect
         result = @reader.mysql.list_fields(name)
@@ -75,7 +77,7 @@ class Mysql2psql
             fields << desc
           end
         end
- 
+
         fields.select {|field| field[:auto_increment]}.each do |field|
           @reader.mysql.query("SELECT max(`#{field[:name]}`) FROM `#{name}`") do |res|
             field[:maxval] = res.fetch_row[0].to_i
@@ -83,22 +85,22 @@ class Mysql2psql
         end
         fields
       end
-    
-    
+
+
       def indexes
         load_indexes unless @indexes
-        @indexes 
+        @indexes
       end
- 
+
       def foreign_keys
         load_indexes unless @foreign_keys
         @foreign_keys
       end
-    
+
       def load_indexes
         @indexes = []
         @foreign_keys = []
-      
+
         @reader.mysql.query("SHOW CREATE TABLE `#{name}`") do |result|
           explain = result.fetch_row[1]
           explain.split(/\n/).each do |line|
@@ -123,55 +125,55 @@ class Mysql2psql
           end
         end
       end
-    
+
       def count_rows
         @reader.mysql.query("SELECT COUNT(*) FROM `#{name}`")  do |res|
           return res.fetch_row[0].to_i
         end
       end
-    
+
       def has_id?
-        !!columns.find {|col| col[:name] == "id"} 
+        !!columns.find {|col| col[:name] == "id"}
       end
-    
+
       def count_for_pager
         query = has_id? ? 'MAX(id)' : 'COUNT(*)'
         @reader.mysql.query("SELECT #{query} FROM `#{name}`") do |res|
           return res.fetch_row[0].to_i
         end
       end
- 
+
       def query_for_pager
         query = has_id? ? 'WHERE id >= ? AND id < ?' : 'LIMIT ?,?'
         "SELECT #{columns.map{|c| "`"+c[:name]+"`"}.join(", ")} FROM `#{name}` #{query}"
       end
     end
-  
+
     def connect
       @mysql = ::Mysql.connect(@host, @user, @passwd, @db, @port, @sock, @flag)
       @mysql.query("SET NAMES utf8")
       @mysql.query("SET SESSION query_cache_type = OFF")
     end
-  
+
     def reconnect
       @mysql.close rescue false
       connect
     end
-  
+
     def initialize(options)
-      @host, @user, @passwd, @db, @port, @sock, @flag = 
-        options.mysqlhostname('localhost'), options.mysqlusername, 
-        options.mysqlpassword, options.mysqldatabase, 
+      @host, @user, @passwd, @db, @port, @sock, @flag =
+        options.mysqlhostname('localhost'), options.mysqlusername,
+        options.mysqlpassword, options.mysqldatabase,
         options.mysqlport, options.mysqlsocket
       connect
     end
-  
+
     attr_reader :mysql
-  
+
     def tables
       @tables ||= @mysql.list_tables.map {|table| Table.new(self, table)}
     end
-  
+
     def paginated_read(table, page_size)
       count = table.count_for_pager
       return if count < 1
